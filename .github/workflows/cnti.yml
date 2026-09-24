@@ -1,0 +1,39 @@
+name: CNTi certification (control plane)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cnti-certification
+  cancel-in-progress: false
+
+jobs:
+  cert:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      # Twelve workloads share the runner's four cores: scaling and
+      # rollouts take longer than the suite's 60-second default.
+      CNTI_TESTSUITE_GENERIC_OPERATION_TIMEOUT: "180"
+    steps:
+      - uses: actions/checkout@v4
+
+      # The umbrella depends on the sibling charts by file:// reference and
+      # 5g-control-plane pulls MongoDB and Kafka from Bitnami, so both
+      # dependency sets are built before the suite installs the chart.
+      - name: Build chart dependencies
+        run: |
+          set -euo pipefail
+          helm repo add bitnami https://charts.bitnami.com/bitnami
+          helm dependency build 5g-control-plane
+          helm dependency build sdcore-helm-charts
+
+      - uses: lfn-cnti/testsuite-action@v1
+        with:
+          version: v2.0.0
+          cnf_config: cnti-testsuite.yaml
+          install_timeout: 900
+          tests: cert
