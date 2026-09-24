@@ -1,0 +1,21 @@
+---
+# CNTi Test Suite configuration for the SD-Core umbrella chart, control
+# plane only: the BESS UPF needs DPDK, SR-IOV, hugepages and Multus
+# attachments that a kind cluster on a hosted runner cannot provide.
+# Resource limits are turned on (the charts define them, off by default),
+# MongoDB runs without persistence, Kafka and the RAN simulator stay off.
+config_version: "v2"
+deployments:
+  helm_dirs:
+    - name: sd-core
+      helm_directory: sdcore-helm-charts
+      namespace: sdcore
+      helm_values: >-
+        --set omec-user-plane.enable=false
+        --set 5g-control-plane.enable5G=true
+        --set 5g-control-plane.resources.enabled=true
+        --set 5g-control-plane.kafka.deploy=false
+        --set 5g-control-plane.mongodb.persistence.enabled=false
+        --set omec-sub-provision.enable=true
+        --set omec-sub-provision.resources.enabled=true
+        --set 5g-ran-sim.enable=false
