@@ -2,7 +2,9 @@
 # CNTi Test Suite configuration for the SD-Core umbrella chart, control
 # plane only: the BESS UPF needs DPDK, SR-IOV, hugepages and Multus
 # attachments that a kind cluster on a hosted runner cannot provide.
-# Resource limits are turned on (the charts define them, off by default),
+# Resource limits are turned on (the charts define them, off by default)
+# with the CPU requests shrunk: the defaults ask for 1 to 2 CPUs per
+# function and two kind workers on a 4-vCPU runner cannot schedule that.
 # MongoDB runs without persistence, Kafka and the RAN simulator stay off.
 config_version: "v2"
 deployments:
@@ -18,4 +20,16 @@ deployments:
         --set 5g-control-plane.mongodb.persistence.enabled=false
         --set omec-sub-provision.enable=true
         --set omec-sub-provision.resources.enabled=true
+        --set omec-sub-provision.resources.simapp.requests.cpu=100m
+        --set 5g-control-plane.mongodb.resources.requests.cpu=250m
+        --set 5g-control-plane.resources.amf.requests.cpu=200m
+        --set 5g-control-plane.resources.ausf.requests.cpu=200m
+        --set 5g-control-plane.resources.nrf.requests.cpu=200m
+        --set 5g-control-plane.resources.nssf.requests.cpu=200m
+        --set 5g-control-plane.resources.pcf.requests.cpu=200m
+        --set 5g-control-plane.resources.smf.requests.cpu=200m
+        --set 5g-control-plane.resources.udm.requests.cpu=200m
+        --set 5g-control-plane.resources.udr.requests.cpu=200m
+        --set 5g-control-plane.resources.webui.requests.cpu=200m
+        --set 5g-control-plane.resources.upfadapter.requests.cpu=200m
         --set 5g-ran-sim.enable=false
