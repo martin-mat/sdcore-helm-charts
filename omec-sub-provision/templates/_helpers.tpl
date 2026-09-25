@@ -66,3 +66,27 @@ Render init container for coredump.
     - name: host-rootfs
       mountPath: /mnt/host-rootfs
 {{- end -}}
+
+{{/*
+Liveness and readiness probes of a network function container: a TCP
+connect to the port the function serves on, the same port its Service
+publishes. Each probe is tuned or turned off under .Values.probes; every
+field besides "enabled" is passed to the probe as it is.
+Usage: {{ tuple <port> . | include "omec-sub-provision.probes" | nindent 8 }}
+*/}}
+{{- define "omec-sub-provision.probes" -}}
+{{- $port := index . 0 -}}
+{{- $probes := (index . 1).Values.probes -}}
+{{- if $probes.liveness.enabled }}
+livenessProbe:
+  tcpSocket:
+    port: {{ $port }}
+{{- toYaml (omit $probes.liveness "enabled") | nindent 2 }}
+{{- end }}
+{{- if $probes.readiness.enabled }}
+readinessProbe:
+  tcpSocket:
+    port: {{ $port }}
+{{- toYaml (omit $probes.readiness "enabled") | nindent 2 }}
+{{- end }}
+{{- end -}}
