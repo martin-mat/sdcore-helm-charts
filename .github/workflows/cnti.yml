@@ -37,3 +37,17 @@ jobs:
           cnf_config: cnti-testsuite.yaml
           install_timeout: 900
           tests: cert
+
+      # Why did a function not come up? Pod state, events and logs from the
+      # kind cluster the action created; it lives until the job ends.
+      - name: Diagnostics
+        if: failure()
+        run: |
+          set +e
+          echo "::group::pods"; kubectl get pods -A -o wide; echo "::endgroup::"
+          echo "::group::node allocation"; kubectl describe nodes | grep -A9 "Allocated resources"; echo "::endgroup::"
+          for pod in $(kubectl get pods -n sdcore -o name); do
+            echo "::group::describe $pod"; kubectl describe -n sdcore "$pod" | tail -60; echo "::endgroup::"
+            echo "::group::logs $pod"; kubectl logs -n sdcore "$pod" --all-containers --tail=60; echo "::endgroup::"
+          done
+          echo "::group::events"; kubectl get events -n sdcore --sort-by=.lastTimestamp | tail -60; echo "::endgroup::"
