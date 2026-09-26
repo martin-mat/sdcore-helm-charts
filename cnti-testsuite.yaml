@@ -21,7 +21,7 @@ deployments:
         --set 5g-control-plane.enable5G=true
         --set 5g-control-plane.resources.enabled=true
         --set 5g-control-plane.kafka.deploy=false
-        --set 5g-control-plane.mongodb.persistence.enabled=false
+        --set 5g-control-plane.mongodb.persistence.enabled=true
         --set omec-sub-provision.enable=true
         --set omec-sub-provision.resources.enabled=true
         --set omec-sub-provision.resources.simapp.requests.cpu=100m
