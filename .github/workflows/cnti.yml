@@ -41,9 +41,10 @@ jobs:
       # Why did a function not come up? Pod state, events and logs from the
       # kind cluster the action created; it lives until the job ends.
       - name: Diagnostics
-        if: failure()
+        if: always()
         run: |
           set +e
+          echo "::group::probe and restart events"; kubectl get events -A --field-selector reason=Unhealthy -o wide | tail -80; kubectl get events -A --field-selector reason=Killing -o wide | tail -40; kubectl get events -A --field-selector reason=BackOff -o wide | tail -40; echo "::endgroup::"
           echo "::group::pods"; kubectl get pods -A -o wide; echo "::endgroup::"
           echo "::group::node allocation"; kubectl describe nodes | grep -A9 "Allocated resources"; echo "::endgroup::"
           for pod in $(kubectl get pods -n sdcore -o name); do
