@@ -37,3 +37,4 @@ deployments:
         --set 5g-control-plane.resources.webui.requests.cpu=200m
         --set 5g-control-plane.resources.upfadapter.requests.cpu=200m
         --set 5g-ran-sim.enable=false
+        --set 5g-control-plane.images.tags.nrf=5gc-nrf:util-310

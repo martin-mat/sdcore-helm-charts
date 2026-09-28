@@ -31,12 +31,26 @@ jobs:
           helm dependency build 5g-control-plane
           helm dependency build sdcore-helm-charts
 
+      # NRF of the chart's release (v3.1.2) with only omec-project/util
+      # replaced by the commit of omec-project/util#310, so the run shows
+      # that change alone. The other functions keep their released images
+      # and serve as the control.
+      - name: Build the NRF with util#310
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --branch v3.1.2 https://github.com/omec-project/nrf.git nrf-src
+          docker run --rm -v "$PWD/nrf-src:/src" -w /src golang:1.26 sh -c \
+            'go mod edit -replace github.com/omec-project/util=github.com/martin-mat/util@c5ab1de && go mod tidy && grep -n "martin-mat/util" go.mod'
+          docker build -t ghcr.io/omec-project/5gc-nrf:util-310 nrf-src
+          rm -rf nrf-src
+
       - uses: lfn-cnti/testsuite-action@v1
         with:
           version: v2.0.0
           cnf_config: cnti-testsuite.yaml
           install_timeout: 900
           tests: cert
+          kind_load_images: ghcr.io/omec-project/5gc-nrf:util-310
 
       # How much each function logs because of its probes: a TCP probe on a
       # TLS port logs "http: TLS handshake error ... EOF" per connection.
