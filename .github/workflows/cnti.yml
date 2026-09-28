@@ -38,6 +38,20 @@ jobs:
           install_timeout: 900
           tests: cert
 
+      # How much each function logs because of its probes: a TCP probe on a
+      # TLS port logs "http: TLS handshake error ... EOF" per connection.
+      - name: Probe log noise
+        if: always()
+        run: |
+          set +e
+          printf '%-40s %8s %10s %8s\n' pod lines handshake restarts
+          for pod in $(kubectl get pods -n sdcore -o name); do
+            logs=$(kubectl logs -n sdcore "$pod" --all-containers 2>/dev/null)
+            restarts=$(kubectl get -n sdcore "$pod" -o jsonpath='{range .status.containerStatuses[*]}{.restartCount}{" "}{end}')
+            printf '%-40s %8s %10s %8s\n' "${pod#pod/}" "$(printf '%s\n' "$logs" | wc -l)" "$(printf '%s\n' "$logs" | grep -c 'TLS handshake error')" "$restarts"
+          done
+          echo "::group::probe failures (Unhealthy events)"; kubectl get events -n sdcore --field-selector reason=Unhealthy -o custom-columns=OBJ:.involvedObject.name,COUNT:.count,MSG:.message --no-headers | sort | uniq | head -60; echo "::endgroup::"
+
       # Why did a function not come up? Pod state, events and logs from the
       # kind cluster the action created; it lives until the job ends.
       - name: Diagnostics

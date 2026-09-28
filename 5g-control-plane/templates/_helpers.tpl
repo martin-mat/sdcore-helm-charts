@@ -451,6 +451,8 @@ Usage: {{ tuple <port> . | include "5g-control-plane.probes" | nindent 8 }}
 */}}
 {{- define "5g-control-plane.probes" -}}
 {{- $port := index . 0 -}}
+{{- $health := "" -}}
+{{- if gt (len .) 2 }}{{ $health = index . 2 }}{{ end -}}
 {{- $probes := (index . 1).Values.probes -}}
 {{- if $probes.startup.enabled }}
 startupProbe:
@@ -460,14 +462,26 @@ startupProbe:
 {{- end }}
 {{- if $probes.liveness.enabled }}
 livenessProbe:
+{{- if $health }}
+  httpGet:
+    path: /metrics
+    port: {{ $health }}
+{{- else }}
   tcpSocket:
     port: {{ $port }}
+{{- end }}
 {{- toYaml (omit $probes.liveness "enabled") | nindent 2 }}
 {{- end }}
 {{- if $probes.readiness.enabled }}
 readinessProbe:
+{{- if $health }}
+  httpGet:
+    path: /metrics
+    port: {{ $health }}
+{{- else }}
   tcpSocket:
     port: {{ $port }}
+{{- end }}
 {{- toYaml (omit $probes.readiness "enabled") | nindent 2 }}
 {{- end }}
 {{- end -}}
