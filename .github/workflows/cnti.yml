@@ -52,6 +52,43 @@ jobs:
           tests: cert
           kind_load_images: ghcr.io/omec-project/5gc-nrf:util-310
 
+      # util#310: what the NRF (built with it) and the AMF (released image)
+      # log through the HTTP server's error log. First over the whole log,
+      # then after a probe-like connect-and-close and a peer that does not
+      # speak TLS, sent to each SBI port from a pod.
+      - name: util#310 checks
+        if: always()
+        run: |
+          set +e
+          summary() {
+            for nf in nrf amf; do
+              logs=$(kubectl logs -n sdcore deploy/$nf 2>/dev/null)
+              printf '%-4s lines=%-5s stdlib-format=%-4s handshake-EOF=%-4s util-category=%s\n' "$nf" \
+                "$(printf '%s\n' "$logs" | wc -l)" \
+                "$(printf '%s\n' "$logs" | grep -cE '^[0-9]{4}/[0-9]{2}/[0-9]{2} ')" \
+                "$(printf '%s\n' "$logs" | grep -cE 'TLS handshake error from .*: EOF$')" \
+                "$(printf '%s\n' "$logs" | grep -c '"category": "Util"')"
+            done
+          }
+          echo "::group::whole log, before the test"; summary; echo "::endgroup::"
+          for nf in nrf amf; do kubectl logs -n sdcore deploy/$nf 2>/dev/null | wc -l > /tmp/$nf.before; done
+          kubectl run tls-check -n sdcore --image=busybox:1.36 --restart=Never --command -- sh -c '
+            for t in nrf:29510 amf:29518; do
+              h=${t%:*}; p=${t#*:}
+              nc -z -w 3 $h $p && echo "$t: connect-and-close sent"
+              printf "\000\001\002\003\004\005\006\007\010\011" | nc -w 3 $h $p; echo "$t: non-TLS bytes sent"
+            done'
+          kubectl wait -n sdcore --for=jsonpath='{.status.phase}'=Succeeded pod/tls-check --timeout=120s
+          kubectl logs -n sdcore tls-check
+          sleep 5
+          for nf in nrf amf; do
+            echo "::group::$nf: new lines from the server error log"
+            kubectl logs -n sdcore deploy/$nf 2>/dev/null | tail -n +$(( $(cat /tmp/$nf.before) + 1 )) | grep -E 'TLS handshake|^[0-9]{4}/[0-9]{2}/[0-9]{2} |"category": "Util"'
+            echo "::endgroup::"
+          done
+          echo "::group::whole log, after the test"; summary; echo "::endgroup::"
+          kubectl delete pod -n sdcore tls-check --wait=false
+
       # How much each function logs because of its probes: a TCP probe on a
       # TLS port logs "http: TLS handshake error ... EOF" per connection.
       - name: Probe log noise
