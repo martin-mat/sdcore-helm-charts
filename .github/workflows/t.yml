@@ -1,0 +1,45 @@
+name: upfadapter-sigterm-test
+on: {push: {branches: [upfadapter-sigterm-test]}}
+jobs:
+  t:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+      - name: build the upfadapter image from the PR branch
+        run: |
+          git clone -q -b sigterm-shutdown https://github.com/martin-mat/upfadapter.git /tmp/mf
+          git -C /tmp/mf log -1 --format='upfadapter %h %s'
+          docker build -q -t ghcr.io/omec-project/upfadapter:sigterm-test /tmp/mf
+      - run: |
+          cat > kind.yaml <<'K'
+          kind: Cluster
+          apiVersion: kind.x-k8s.io/v1alpha4
+          nodes: [{role: control-plane}, {role: worker}, {role: worker}]
+          K
+          kind create cluster --config kind.yaml --wait 120s
+          kind load docker-image ghcr.io/omec-project/upfadapter:sigterm-test
+      - name: install
+        run: |
+          helm repo add bitnami https://charts.bitnami.com/bitnami
+          helm dependency build 5g-control-plane
+          helm dependency build sdcore-helm-charts
+          S="--set 5g-control-plane.resources"
+          helm install sd-core sdcore-helm-charts -n sdcore --create-namespace --set omec-user-plane.enable=false --set 5g-ran-sim.enable=false --set 5g-control-plane.kafka.deploy=false --set 5g-control-plane.images.tags.upfadapter=upfadapter:sigterm-test $S.amf.requests.cpu=100m $S.ausf.requests.cpu=100m $S.nrf.requests.cpu=100m $S.nssf.requests.cpu=100m $S.pcf.requests.cpu=100m $S.smf.requests.cpu=100m $S.udm.requests.cpu=100m $S.udr.requests.cpu=100m $S.webui.requests.cpu=100m $S.upfadapter.requests.cpu=100m --set omec-sub-provision.resources.simapp.requests.cpu=100m --set 5g-control-plane.mongodb.resources.requests.cpu=250m --wait --timeout 10m
+          sleep 30; kubectl get pods -n sdcore | grep -E "upf-adapter|NAME"
+          kubectl get deploy -n sdcore upf-adapter -o jsonpath='{.spec.template.spec.containers[0].image}{"\n"}'
+      - name: stop upf-adapter
+        run: |
+          set -u; ns=sdcore
+          pod=$(kubectl get pods -n $ns -o name | sed 's#pod/##' | grep '^upf-adapter-' | head -1)
+          c=$(kubectl get pod -n $ns $pod -o jsonpath='{.spec.containers[0].name}')
+          echo "pod $pod, PID 1: $(kubectl exec -n $ns $pod -c $c -- cat /proc/1/comm)"
+          kubectl logs -f -n $ns $pod -c $c > /tmp/mf.log 2>&1 & lp=$!
+          kubectl get pod -n $ns $pod -w -o jsonpath='{.status.containerStatuses[0].state.terminated.exitCode} {.status.containerStatuses[0].state.terminated.reason}{"\n"}' > /tmp/w.watch 2>/dev/null & wp=$!
+          sleep 2; t0=$(date +%s.%N)
+          kubectl scale -n $ns deploy/upf-adapter --replicas=0 >/dev/null
+          kubectl wait -n $ns --for=delete pod/$pod --timeout=60s >/dev/null
+          t1=$(date +%s.%N); sleep 1; kill $lp $wp 2>/dev/null
+          echo "exit after $(echo "$t1 - $t0" | bc) s: $(grep -E '^[0-9]+ ' /tmp/w.watch | tail -1)"
+          echo "panics: $(grep -c -iE 'panic|fatal' /tmp/mf.log)"
+          grep -aE "listen on|terminat|stopped|closed|shutdown" /tmp/mf.log | tr '\t' ' ' | sed -E 's/\{"component.*//' | tail -6
