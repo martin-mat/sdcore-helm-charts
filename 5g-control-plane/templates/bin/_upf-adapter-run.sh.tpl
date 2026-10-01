@@ -17,4 +17,4 @@ cp /opt/$FILENAME $CFGPATH/$FILENAME
 cat $CFGPATH/$FILENAME
 echo ""
 
-GOTRACEBACK=crash upfadapter -cfg $CFGPATH/$FILENAME
+exec env GOTRACEBACK=crash upfadapter -cfg $CFGPATH/$FILENAME

@@ -18,4 +18,4 @@ cp /opt/$FILENAME $CFGPATH/$FILENAME
 cat $CFGPATH/$FILENAME
 echo ""
 
-GOTRACEBACK=crash ausf -cfg $CFGPATH/$FILENAME
+exec env GOTRACEBACK=crash ausf -cfg $CFGPATH/$FILENAME

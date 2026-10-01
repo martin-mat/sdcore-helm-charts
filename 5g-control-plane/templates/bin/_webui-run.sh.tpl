@@ -18,4 +18,4 @@ cp /opt/$FILENAME $CFGPATH/$FILENAME
 cat $CFGPATH/$FILENAME
 echo ""
 
-GOTRACEBACK=crash webconsole -cfg $CFGPATH/$FILENAME
+exec env GOTRACEBACK=crash webconsole -cfg $CFGPATH/$FILENAME

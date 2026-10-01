@@ -1,0 +1,30 @@
+name: shutdown-verify-2
+on: {push: {branches: [shutdown-verify-2]}}
+jobs:
+  v:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          cat > kind.yaml <<'K'
+          kind: Cluster
+          apiVersion: kind.x-k8s.io/v1alpha4
+          nodes: [{role: control-plane}, {role: worker}, {role: worker}]
+          K
+          kind create cluster --config kind.yaml --wait 120s
+      - name: install
+        run: |
+          helm repo add bitnami https://charts.bitnami.com/bitnami
+          helm dependency build 5g-control-plane
+          helm dependency build sdcore-helm-charts
+          S="--set 5g-control-plane.resources"
+          helm install sd-core sdcore-helm-charts -n sdcore --create-namespace --set omec-user-plane.enable=false --set 5g-ran-sim.enable=false --set 5g-control-plane.kafka.deploy=false --set 5g-control-plane.config.sctplb.deploy=true --set 5g-control-plane.config.metricfunc.deploy=true $S.amf.requests.cpu=100m $S.ausf.requests.cpu=100m $S.nrf.requests.cpu=100m $S.nssf.requests.cpu=100m $S.pcf.requests.cpu=100m $S.smf.requests.cpu=100m $S.udm.requests.cpu=100m $S.udr.requests.cpu=100m $S.webui.requests.cpu=100m $S.upfadapter.requests.cpu=100m $S.sctplb.requests.cpu=100m $S.metricfunc.requests.cpu=100m --set omec-sub-provision.resources.simapp.requests.cpu=100m --set 5g-control-plane.mongodb.resources.requests.cpu=250m --wait --timeout 10m
+          kubectl run nrfq -n sdcore --image=curlimages/curl --restart=Never --command -- sleep 7200
+          kubectl wait -n sdcore --for=condition=Ready pod/nrfq --timeout=120s
+          sleep 60; kubectl get pods -n sdcore
+      - name: verify
+        run: mkdir -p /tmp/logs; ci/verify.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: {name: shutdown-logs, path: /tmp/logs}
