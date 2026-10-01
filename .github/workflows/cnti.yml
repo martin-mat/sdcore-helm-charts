@@ -1,0 +1,63 @@
+# SPDX-FileCopyrightText: 2026 Linux Foundation Networking
+# SPDX-License-Identifier: Apache-2.0
+
+name: CNTi cert
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, pilot-check]
+  schedule:
+    - cron: "0 3 * * *"
+
+# contents: write lets the action publish the result badge to the orphan
+# branch `badges`; runs on the default branch only.
+permissions:
+  contents: write
+
+concurrency:
+  group: cnti-cert-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  cert:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      # Twelve workloads share the runner's four cores: scaling and
+      # rollouts take longer than the suite's 60-second default.
+      CNTI_TESTSUITE_GENERIC_OPERATION_TIMEOUT: "180"
+    steps:
+      - uses: actions/checkout@v4
+
+      # The umbrella depends on the sibling charts by file:// reference and
+      # 5g-control-plane pulls MongoDB and Kafka from Bitnami, so both
+      # dependency sets are built before the suite installs the chart.
+      - name: Build chart dependencies
+        run: |
+          set -euo pipefail
+          helm repo add bitnami https://charts.bitnami.com/bitnami
+          helm dependency build 5g-control-plane
+          helm dependency build sdcore-helm-charts
+
+      - uses: lfn-cnti/testsuite-action@v1
+        with:
+          version: v2.1.0
+          cnf_config: .github/cnti/cnti-testsuite.yaml
+          install_timeout: 900
+          tests: cert
+          badge_branch: badges
+
+      # Why did a function not come up? Pod state, events and logs from the
+      # kind cluster the action created; it lives until the job ends.
+      - name: Diagnostics
+        if: failure()
+        run: |
+          set +e
+          echo "::group::pods"; kubectl get pods -A -o wide; echo "::endgroup::"
+          echo "::group::node allocation"; kubectl describe nodes | grep -A9 "Allocated resources"; echo "::endgroup::"
+          for pod in $(kubectl get pods -n sdcore -o name); do
+            echo "::group::describe $pod"; kubectl describe -n sdcore "$pod" | tail -60; echo "::endgroup::"
+            echo "::group::logs $pod"; kubectl logs -n sdcore "$pod" --all-containers --tail=60; echo "::endgroup::"
+          done
+          echo "::group::events"; kubectl get events -n sdcore --sort-by=.lastTimestamp | tail -60; echo "::endgroup::"
