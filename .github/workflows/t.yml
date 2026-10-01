@@ -1,0 +1,50 @@
+name: simapp-sigterm-test
+on: {push: {branches: [simapp-sigterm-test]}}
+jobs:
+  t:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+      - name: build the simapp image from the PR branch
+        run: |
+          git clone -q -b sigterm-shutdown https://github.com/martin-mat/simapp.git /tmp/sa
+          git -C /tmp/sa log -1 --format='simapp %h %s'
+          docker build -q -t ghcr.io/omec-project/simapp:sigterm-test /tmp/sa
+      - run: |
+          cat > kind.yaml <<'K'
+          kind: Cluster
+          apiVersion: kind.x-k8s.io/v1alpha4
+          nodes: [{role: control-plane}, {role: worker}, {role: worker}]
+          K
+          kind create cluster --config kind.yaml --wait 120s
+          kind load docker-image ghcr.io/omec-project/simapp:sigterm-test
+      - name: install
+        run: |
+          helm repo add bitnami https://charts.bitnami.com/bitnami
+          helm dependency build 5g-control-plane
+          helm dependency build sdcore-helm-charts
+          S="--set 5g-control-plane.resources"
+          helm install sd-core sdcore-helm-charts -n sdcore --create-namespace --set omec-user-plane.enable=false --set 5g-ran-sim.enable=false --set 5g-control-plane.kafka.deploy=false --set omec-sub-provision.images.tags.simapp=simapp:sigterm-test $S.amf.requests.cpu=100m $S.ausf.requests.cpu=100m $S.nrf.requests.cpu=100m $S.nssf.requests.cpu=100m $S.pcf.requests.cpu=100m $S.smf.requests.cpu=100m $S.udm.requests.cpu=100m $S.udr.requests.cpu=100m $S.webui.requests.cpu=100m $S.upfadapter.requests.cpu=100m --set omec-sub-provision.resources.simapp.requests.cpu=100m --set 5g-control-plane.mongodb.resources.requests.cpu=250m --wait --timeout 10m
+          sleep 45; kubectl get pods -n sdcore | grep -E "simapp|webui|NAME"
+      - name: stop simapp, serving and waiting
+        run: |
+          set -u; ns=sdcore
+          stop() { # $1 = label for the phase
+            pod=$(kubectl get pods -n $ns -o name | sed 's#pod/##' | grep '^simapp-' | head -1)
+            echo "=== $1: pod $pod, PID 1: $(kubectl exec -n $ns $pod -c simapp -- cat /proc/1/comm)"
+            kubectl logs -f -n $ns $pod -c simapp > /tmp/sa.log 2>&1 & lp=$!
+            kubectl get pod -n $ns $pod -w -o jsonpath='{.status.containerStatuses[0].state.terminated.exitCode} {.status.containerStatuses[0].state.terminated.reason}{"\n"}' > /tmp/w.watch 2>/dev/null & wp=$!
+            sleep 2; t0=$(date +%s.%N)
+            kubectl scale -n $ns deploy/simapp --replicas=0 >/dev/null
+            kubectl wait -n $ns --for=delete pod/$pod --timeout=60s >/dev/null
+            t1=$(date +%s.%N); sleep 1; kill $lp $wp 2>/dev/null
+            echo "exit after $(echo "$t1 - $t0" | bc) s: $(grep -E '^[0-9]+ ' /tmp/w.watch | tail -1)"
+            echo "panics: $(grep -c -iE 'panic|fatal' /tmp/sa.log)"
+            grep -aE "phase 3 complete|waiting for webui|webui not ready|received|terminat|shutdown" /tmp/sa.log | tr '\t' ' ' | sed -E 's/\{"component.*//' | tail -4
+          }
+          echo "provisioning: $(kubectl logs -n $ns deploy/simapp | grep -c 'POST 20[01] success') successful POSTs"
+          stop "after provisioning (serving /synchronize)"
+          kubectl scale -n $ns deploy/webui --replicas=0; kubectl wait -n $ns --for=delete pod -l app=webui --timeout=60s >/dev/null 2>&1; sleep 5
+          kubectl scale -n $ns deploy/simapp --replicas=1; sleep 25
+          stop "while waiting for the webui"
