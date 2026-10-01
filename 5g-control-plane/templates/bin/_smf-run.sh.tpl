@@ -22,4 +22,4 @@ echo ""
 cat $CFGPATH/$UEFILENAME
 echo ""
 
-GOTRACEBACK=crash GOGC=200 smf -cfg $CFGPATH/$FILENAME -uerouting $CFGPATH/$UEFILENAME
+exec env GOTRACEBACK=crash GOGC=200 smf -cfg $CFGPATH/$FILENAME -uerouting $CFGPATH/$UEFILENAME
