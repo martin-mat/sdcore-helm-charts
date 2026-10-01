@@ -1,0 +1,37 @@
+name: shutdown-verify
+on: {push: {branches: [shutdown-verify]}}
+jobs:
+  t:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [main-as-is, exec-all]
+    name: ${{ matrix.variant }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: apply exec
+        if: matrix.variant == 'exec-all'
+        run: |
+          for f in ci/*.exec; do b=$(basename $f .exec); t=$(ls 5g-control-plane/templates/bin/$b omec-sub-provision/templates/bin/$b 2>/dev/null); cp $f $t; done
+          grep -h "^exec" 5g-control-plane/templates/bin/*.tpl omec-sub-provision/templates/bin/*.tpl | wc -l
+      - run: |
+          cat > kind.yaml <<'K'
+          kind: Cluster
+          apiVersion: kind.x-k8s.io/v1alpha4
+          nodes: [{role: control-plane}, {role: worker}, {role: worker}]
+          K
+          kind create cluster --config kind.yaml --wait 120s
+      - name: install
+        run: |
+          helm repo add bitnami https://charts.bitnami.com/bitnami
+          helm dependency build 5g-control-plane
+          helm dependency build sdcore-helm-charts
+          helm install sd-core sdcore-helm-charts -n sdcore --create-namespace --set omec-user-plane.enable=false --set 5g-ran-sim.enable=false --set 5g-control-plane.kafka.deploy=false --set 5g-control-plane.config.sctplb.deploy=true --set 5g-control-plane.config.metricfunc.deploy=true --wait --timeout 10m
+          sleep 60; kubectl get pods -n sdcore
+      - name: shutdown
+        run: mkdir -p /tmp/shutdown-logs; ci/shutdown.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: {name: "logs-${{ matrix.variant }}", path: /tmp/shutdown-logs}
