@@ -7,14 +7,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        variant: [main-as-is, exec-all]
+        variant: [exec-all]
     name: ${{ matrix.variant }}
     steps:
       - uses: actions/checkout@v4
       - name: apply exec
         if: matrix.variant == 'exec-all'
         run: |
-          for f in ci/*.exec; do b=$(basename $f .exec); t=$(ls 5g-control-plane/templates/bin/$b omec-sub-provision/templates/bin/$b 2>/dev/null); cp $f $t; done
+          for f in ci/*.exec; do b=$(basename $f .exec); t=$(find 5g-control-plane/templates/bin omec-sub-provision/templates/bin -name "$b"); cp "$f" "$t"; done
           grep -h "^exec" 5g-control-plane/templates/bin/*.tpl omec-sub-provision/templates/bin/*.tpl | wc -l
       - run: |
           cat > kind.yaml <<'K'
