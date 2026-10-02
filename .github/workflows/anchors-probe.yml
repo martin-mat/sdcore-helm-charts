@@ -1,0 +1,39 @@
+name: anchors probe
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/anchors-probe.yml
+      - probe/**
+permissions:
+  contents: read
+jobs:
+  cert:
+    if: github.repository == 'martin-mat/sdcore-helm-charts' && github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env: &cert-env
+      PROBE_NOTE: "env from the anchor"
+    steps: &cert-steps
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: token probe
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "job=${{ github.job }} event=${{ github.event_name }} ref=${{ github.ref }} note=$PROBE_NOTE"
+          ref="refs/heads/probe-${{ github.run_id }}-${{ github.job }}"
+          if gh api -X POST "repos/${{ github.repository }}/git/refs" -f ref="$ref" -f sha="${{ github.sha }}" >/dev/null 2>&1; then
+            echo "TOKEN CAN WRITE"; gh api -X DELETE "repos/${{ github.repository }}/git/$ref" >/dev/null
+          else
+            echo "TOKEN IS READ-ONLY"
+          fi
+  cert-pr:
+    if: github.repository == 'martin-mat/sdcore-helm-charts' && (github.event_name == 'pull_request' || github.ref != 'refs/heads/main')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env: *cert-env
+    steps: *cert-steps
