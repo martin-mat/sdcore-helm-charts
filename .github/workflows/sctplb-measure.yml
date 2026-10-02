@@ -1,12 +1,18 @@
-name: sctplb loop measure
-on: {push: {branches: [sctplb-loop-measure]}}
+name: sctplb loop fix
+on: {push: {branches: [sctplb-loop-fix]}}
 jobs:
   measure:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+      - name: build sctplb from the fix branch
+        run: |
+          git clone -q -b discovery-loop https://github.com/martin-mat/sctplb.git /tmp/sl
+          git -C /tmp/sl log -1 --format='sctplb %h %s'
+          docker build -q -t ghcr.io/omec-project/sctplb:loop-fix /tmp/sl
       - uses: helm/kind-action@v1
+      - run: kind load docker-image ghcr.io/omec-project/sctplb:loop-fix --name chart-testing
       - name: metrics-server
         run: |
           kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
@@ -18,7 +24,7 @@ jobs:
           helm dependency build 5g-control-plane
           helm dependency build sdcore-helm-charts
           S="--set 5g-control-plane.resources"
-          helm install sd-core sdcore-helm-charts -n sdcore --create-namespace --set omec-user-plane.enable=false --set 5g-ran-sim.enable=false --set 5g-control-plane.kafka.deploy=false --set 5g-control-plane.config.sctplb.deploy=true $S.amf.requests.cpu=100m $S.ausf.requests.cpu=100m $S.nrf.requests.cpu=100m $S.nssf.requests.cpu=100m $S.pcf.requests.cpu=100m $S.smf.requests.cpu=100m $S.udm.requests.cpu=100m $S.udr.requests.cpu=100m $S.webui.requests.cpu=100m $S.upfadapter.requests.cpu=100m $S.sctplb.requests.cpu=100m --set omec-sub-provision.resources.simapp.requests.cpu=100m --set 5g-control-plane.mongodb.resources.requests.cpu=250m --wait --timeout 10m
+          helm install sd-core sdcore-helm-charts -n sdcore --create-namespace --set omec-user-plane.enable=false --set 5g-ran-sim.enable=false --set 5g-control-plane.kafka.deploy=false --set 5g-control-plane.config.sctplb.deploy=true --set 5g-control-plane.images.tags.sctplb=sctplb:loop-fix $S.amf.requests.cpu=100m $S.ausf.requests.cpu=100m $S.nrf.requests.cpu=100m $S.nssf.requests.cpu=100m $S.pcf.requests.cpu=100m $S.smf.requests.cpu=100m $S.udm.requests.cpu=100m $S.udr.requests.cpu=100m $S.webui.requests.cpu=100m $S.upfadapter.requests.cpu=100m $S.sctplb.requests.cpu=100m --set omec-sub-provision.resources.simapp.requests.cpu=100m --set 5g-control-plane.mongodb.resources.requests.cpu=250m --wait --timeout 10m
           sleep 90; kubectl get pods -n sdcore | grep -E "sctplb|amf|NAME"
           kubectl get configmap -n sdcore -o name | grep -i sctplb | head -3
           kubectl get configmap -n sdcore sctplb -o jsonpath='{.data}' 2>/dev/null | head -c 600; echo
@@ -32,7 +38,10 @@ jobs:
           echo "sctplb running: DNS queries/s = $(rate)"
           echo "sctplb CPU/memory:"; kubectl top pod -n sdcore --no-headers | grep -E "sctplb|amf"
           kubectl top pod -n kube-system --no-headers | grep coredns
-          echo "--- sctplb log (last lines):"; kubectl logs -n sdcore deploy/sctplb --tail=5 2>/dev/null | cut -c1-200
+          echo "image: $(kubectl get deploy -n sdcore sctplb -o jsonpath='{.spec.template.spec.containers[0].image}')"; kubectl logs -n sdcore deploy/sctplb > /tmp/sl.log 2>&1
+          echo "--- failed lookups: $(grep -c 'discover service .* error' /tmp/sl.log), first $(grep -m1 'discover service .* error' /tmp/sl.log | cut -c1-24), last $(grep 'discover service .* error' /tmp/sl.log | tail -1 | cut -c1-24)"
+          echo "--- amf pod ready since: $(kubectl get pods -n sdcore -l app=amf -o jsonpath='{.items[0].status.conditions[?(@.type=="Ready")].lastTransitionTime}')"
+          echo "--- found and connected:"; grep -aiE "new server found|connecting to target|Connectivity change to READY" /tmp/sl.log | cut -c1-170 | head -6
           kubectl scale -n sdcore deploy/sctplb --replicas=0; kubectl wait -n sdcore --for=delete pod -l app=sctplb --timeout=60s >/dev/null 2>&1; sleep 10
           echo "sctplb scaled to 0: DNS queries/s = $(rate)"
           kubectl top pod -n kube-system --no-headers | grep coredns
