@@ -1,0 +1,38 @@
+name: sctplb loop measure
+on: {push: {branches: [sctplb-loop-measure]}}
+jobs:
+  measure:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: helm/kind-action@v1
+      - name: metrics-server
+        run: |
+          kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+          kubectl patch deploy metrics-server -n kube-system --type=json -p='[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]'
+          kubectl rollout status deploy/metrics-server -n kube-system --timeout=180s
+      - name: install
+        run: |
+          helm repo add bitnami https://charts.bitnami.com/bitnami
+          helm dependency build 5g-control-plane
+          helm dependency build sdcore-helm-charts
+          S="--set 5g-control-plane.resources"
+          helm install sd-core sdcore-helm-charts -n sdcore --create-namespace --set omec-user-plane.enable=false --set 5g-ran-sim.enable=false --set 5g-control-plane.kafka.deploy=false --set 5g-control-plane.config.sctplb.deploy=true $S.amf.requests.cpu=100m $S.ausf.requests.cpu=100m $S.nrf.requests.cpu=100m $S.nssf.requests.cpu=100m $S.pcf.requests.cpu=100m $S.smf.requests.cpu=100m $S.udm.requests.cpu=100m $S.udr.requests.cpu=100m $S.webui.requests.cpu=100m $S.upfadapter.requests.cpu=100m $S.sctplb.requests.cpu=100m --set omec-sub-provision.resources.simapp.requests.cpu=100m --set 5g-control-plane.mongodb.resources.requests.cpu=250m --wait --timeout 10m
+          sleep 90; kubectl get pods -n sdcore | grep -E "sctplb|amf|NAME"
+          kubectl get configmap -n sdcore -o name | grep -i sctplb | head -3
+          kubectl get configmap -n sdcore sctplb -o jsonpath='{.data}' 2>/dev/null | head -c 600; echo
+      - name: measure
+        run: |
+          set -u
+          dns_total() { local t=0; for p in $(kubectl get pods -n kube-system -l k8s-app=kube-dns -o name); do n=$(kubectl get --raw "/api/v1/namespaces/kube-system/${p#pod/}:9153/proxy/metrics" 2>/dev/null | grep '^coredns_dns_requests_total' | awk '{s+=$2} END{printf "%d", s}'); t=$((t + ${n:-0})); done; echo $t; }
+          pods_path() { echo "/api/v1/namespaces/kube-system/pods"; }
+          dns_total() { local t=0; for p in $(kubectl get pods -n kube-system -l k8s-app=kube-dns -o jsonpath='{.items[*].metadata.name}'); do n=$(kubectl get --raw "/api/v1/namespaces/kube-system/pods/$p:9153/proxy/metrics" 2>/dev/null | grep '^coredns_dns_requests_total' | awk '{s+=$2} END{printf "%d", s}'); t=$((t + ${n:-0})); done; echo $t; }
+          rate() { a=$(dns_total); sleep 60; b=$(dns_total); echo $(( (b - a) / 60 )); }
+          echo "sctplb running: DNS queries/s = $(rate)"
+          echo "sctplb CPU/memory:"; kubectl top pod -n sdcore --no-headers | grep -E "sctplb|amf"
+          kubectl top pod -n kube-system --no-headers | grep coredns
+          echo "--- sctplb log (last lines):"; kubectl logs -n sdcore deploy/sctplb --tail=5 2>/dev/null | cut -c1-200
+          kubectl scale -n sdcore deploy/sctplb --replicas=0; kubectl wait -n sdcore --for=delete pod -l app=sctplb --timeout=60s >/dev/null 2>&1; sleep 10
+          echo "sctplb scaled to 0: DNS queries/s = $(rate)"
+          kubectl top pod -n kube-system --no-headers | grep coredns
