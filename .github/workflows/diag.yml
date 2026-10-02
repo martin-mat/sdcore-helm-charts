@@ -1,0 +1,44 @@
+name: capacity + drain diag
+on: {push: {branches: [cert-3workers-diag]}}
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build chart dependencies
+        run: |
+          helm repo add bitnami https://charts.bitnami.com/bitnami
+          helm dependency build 5g-control-plane
+          helm dependency build sdcore-helm-charts
+      # Records webui and simapp throughout: every pod's log (current and
+      # previous container), and their state, every 5 s.
+      - name: Recorder
+        run: |
+          mkdir -p /tmp/diag/logs
+          nohup bash -c 'while true; do
+            for p in $(kubectl get pods -n sdcore -l "app in (webui,simapp)" -o name 2>/dev/null); do n=${p#pod/}
+              kubectl logs -n sdcore $p --timestamps > /tmp/diag/logs/$n.log 2>/dev/null
+              kubectl logs -n sdcore $p --previous --timestamps > /tmp/diag/logs/$n.previous.log 2>/dev/null || rm -f /tmp/diag/logs/$n.previous.log
+            done
+            { date -u +%T; kubectl get pods -n sdcore -o wide --no-headers -l "app in (webui,simapp,mongodb)" 2>/dev/null; } >> /tmp/diag/status.log
+            sleep 5; done' >/dev/null 2>&1 &
+      - uses: lfn-cnti/testsuite-action@05a9860905f31c6813f735d25e5cefd7c62a1e5a # v1.1.0
+        with:
+          version: v2.1.0
+          cnf_config: .github/cnti/cnti-testsuite.yaml
+          kind_config: .github/cnti/kind-3workers.yaml
+          tests: increase_decrease_capacity node_drain
+          log_level: info
+          fail_on_failure: false
+      - name: Summary
+        if: always()
+        run: |
+          sleep 6
+          kubectl get events -n sdcore --sort-by=.lastTimestamp > /tmp/diag/events.log 2>&1 || true
+          echo "== pod logs captured:"; ls -la /tmp/diag/logs | tail -20
+          for f in /tmp/diag/logs/*.log; do echo "=== $(basename $f): $(wc -l < $f) lines, first $(head -1 $f | cut -c1-30), last:"; tail -6 $f | tr '\t' ' ' | sed -E 's/\{"component.*//' | cut -c1-200; done
+          echo "== webui/simapp events"; grep -E "webui|simapp" /tmp/diag/events.log | tail -30 | cut -c1-200
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: {name: diag, path: /tmp/diag}
