@@ -45,9 +45,16 @@ spec:
     spec:
       template:
         spec:
+          # The operator replaces its pod securityContext with this one rather
+          # than merging the fields, so the whole context is repeated here:
+          # a group without a user fails the pod sandbox.
           securityContext:
+            runAsNonRoot: true
+            runAsUser: 2000
             runAsGroup: 2000
             fsGroup: 2000
+            seccompProfile:
+              type: RuntimeDefault
           containers:
             - name: mongod
               securityContext:
