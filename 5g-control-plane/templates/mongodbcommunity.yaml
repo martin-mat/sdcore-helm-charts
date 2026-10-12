@@ -1,0 +1,51 @@
+{{- /*
+SPDX-FileCopyrightText: 2026 Linux Foundation Networking
+SPDX-License-Identifier: Apache-2.0
+*/ -}}
+{{- if .Values.mongodbCommunity.enabled }}
+{{- $m := .Values.mongodbCommunity }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $m.name }}-{{ $m.user }}-password
+type: Opaque
+stringData:
+  password: {{ $m.password | quote }}
+---
+apiVersion: mongodbcommunity.mongodb.com/v1
+kind: MongoDBCommunity
+metadata:
+  name: {{ $m.name }}
+spec:
+  type: ReplicaSet
+  version: {{ $m.version | quote }}
+  members: {{ $m.members }}
+  arbiters: {{ $m.arbiters }}
+  security:
+    authentication:
+      modes: ["SCRAM"]
+  users:
+    - name: {{ $m.user }}
+      db: admin
+      passwordSecretRef:
+        name: {{ $m.name }}-{{ $m.user }}-password
+      scramCredentialsSecretName: {{ $m.name }}-{{ $m.user }}
+      roles:
+        - name: readWriteAnyDatabase
+          db: admin
+        - name: dbAdminAnyDatabase
+          db: admin
+        - name: clusterMonitor
+          db: admin
+  statefulSet:
+    spec:
+      template:
+        spec:
+          containers:
+            - name: mongod
+              resources:
+                {{- toYaml $m.resources.mongod | nindent 16 }}
+            - name: mongodb-agent
+              resources:
+                {{- toYaml $m.resources.agent | nindent 16 }}
+{{- end }}

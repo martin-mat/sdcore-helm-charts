@@ -32,4 +32,4 @@ deployments:
         --set 5g-control-plane.resources.webui.requests.cpu=200m
         --set 5g-control-plane.resources.upfadapter.requests.cpu=200m
         --set omec-sub-provision.resources.simapp.requests.cpu=100m
-        --set 5g-control-plane.mongodb.resources.requests.cpu=250m
+        --set 5g-control-plane.mongodbCommunity.resources.mongod.requests.cpu=250m

@@ -179,8 +179,10 @@ kafka:
     repository: bitnamilegacy/kafka # Bitnami moved images to bitnamilegacy (https://hub.docker.com/r/bitnami/kafka)
     # tag: 4.0.0-debian-12-r10
 
+# Bitnami's MongoDB chart, kept for comparison. Its images are frozen in the
+# bitnamilegacy registry; mongodbCommunity below replaces it.
 mongodb:
-  deploy: true
+  deploy: false
   fullnameOverride: mongodb
   persistence:
     enabled: false
@@ -224,6 +226,43 @@ mongodb:
     repository: bitnamilegacy/mongodb # Bitnami moved images to bitnamilegacy (https://hub.docker.com/r/bitnami/mongodb)
     # tag: latest
 
+# MongoDB through MongoDB's own operator (MongoDB Controllers for Kubernetes,
+# https://github.com/mongodb/mongodb-kubernetes), which must be installed in
+# the cluster first, watching this namespace. The chart declares the replica
+# set; the operator runs it: members, the arbiter, joins and removals,
+# upgrades. Its readiness probe reports Ready when the member's automation
+# agent has reached the configured state, not merely when mongod answers.
+mongodbCommunity:
+  enabled: true
+  # Also the replica set's name, and its Service is <name>-svc.
+  name: mongodb
+  version: "8.0.13"
+  # Two data members and an arbiter, as with the Bitnami chart (#180).
+  members: 2
+  arbiters: 1
+  # The operator always enables SCRAM authentication; the network functions
+  # connect as this user (config.mongodb.url).
+  user: aether
+  # PROTOTYPE: a fixed password, also written into config.mongodb.url.
+  password: aether-sdcore
+  resources:
+    # The sizes the Bitnami chart used for MongoDB (see above).
+    mongod:
+      requests:
+        cpu: 2
+        memory: 1Gi
+      limits:
+        cpu: 4
+        memory: 2Gi
+    # The automation agent next to each mongod.
+    agent:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+
 config:
   certs:
     clusterDomain: cluster.local
@@ -238,9 +277,10 @@ config:
     path: /tmp/coredump
   mongodb:
     name: aether
-    url: mongodb://mongodb-headless:27017/?replicaSet=rs0 # note that architecture: replicaset
+    # PROTOTYPE: the credentials of mongodbCommunity.user in the URL.
+    url: mongodb://aether:aether-sdcore@mongodb-svc:27017/?replicaSet=mongodb&authSource=admin
     authKeysDbName: authentication
-    authUrl: mongodb://mongodb-headless:27017/?replicaSet=rs0 # note that architecture: replicaset
+    authUrl: mongodb://aether:aether-sdcore@mongodb-svc:27017/?replicaSet=mongodb&authSource=admin
   grpc:  # this is used by AMF and SCTPLB
     golog_verbosity: "0"
     severity: "info"

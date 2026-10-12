@@ -51,13 +51,31 @@ jobs:
           helm dependency build 5g-control-plane
           helm dependency build sdcore-helm-charts
 
+      # Three workers, so that MongoDB's two data members and its arbiter
+      # stay on separate nodes while the node_drain test drains them in turn.
+      - name: Create the kind cluster
+        uses: helm/kind-action@06c1ae10762d3b9c1644e7fe69596ae519e015a2 # v1.15.0
+        with:
+          cluster_name: cnti-testsuite
+          config: .github/cnti/kind.yaml
+
+      # MongoDB runs through MongoDB's operator, a prerequisite of the chart
+      # like a CRD: installed once per cluster, watching the namespace the
+      # control plane is installed into.
+      - name: Install the MongoDB operator
+        run: |
+          set -euo pipefail
+          kubectl create namespace sdcore
+          helm repo add mongodb https://mongodb.github.io/helm-charts
+          helm install mongodb-kubernetes mongodb/mongodb-kubernetes --version 1.13.0 \
+            --namespace mongodb-operator --create-namespace \
+            --set operator.watchNamespace=sdcore --wait --timeout 5m
+
       - uses: lfn-cnti/testsuite-action@70536fda55fcb11f4f7463175fe9d57c86b85574 # v1.2.0
         with:
           version: v2.2.0
           cnf_config: .github/cnti/cnti-testsuite.yaml
-          # Three workers, so that MongoDB's two data members and its arbiter
-          # stay on separate nodes while the node_drain test drains them in turn.
-          kind_config: .github/cnti/kind.yaml
+          create_kind_cluster: "false"
           install_timeout: 900
           tests: cert
           badge_branch: badges
@@ -70,6 +88,8 @@ jobs:
           set +e
           echo "::group::pods"; kubectl get pods -A -o wide; echo "::endgroup::"
           echo "::group::node allocation"; kubectl describe nodes | grep -A9 "Allocated resources"; echo "::endgroup::"
+          echo "::group::MongoDBCommunity"; kubectl get mongodbcommunity -n sdcore -o yaml | tail -40; echo "::endgroup::"
+          echo "::group::operator logs"; kubectl logs -n mongodb-operator deploy/mongodb-kubernetes-operator --tail=80; echo "::endgroup::"
           for pod in $(kubectl get pods -n sdcore -o name); do
             echo "::group::describe $pod"; kubectl describe -n sdcore "$pod" | tail -60; echo "::endgroup::"
             echo "::group::logs $pod"; kubectl logs -n sdcore "$pod" --all-containers --tail=60; echo "::endgroup::"
