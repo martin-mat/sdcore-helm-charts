@@ -37,15 +37,37 @@ spec:
           db: admin
         - name: clusterMonitor
           db: admin
+  # Applies to the data members and the arbiter. The operator's pods run as
+  # uid 2000 with group 0 and without a liveness probe
+  # (mongodb/mongodb-kubernetes#1629, #1628); until it sets both, the chart
+  # does.
   statefulSet:
     spec:
       template:
         spec:
+          securityContext:
+            runAsGroup: 2000
+            fsGroup: 2000
           containers:
             - name: mongod
+              securityContext:
+                runAsGroup: 2000
               resources:
                 {{- toYaml $m.resources.mongod | nindent 16 }}
+              # Generous on purpose: the automation agent stops and restarts
+              # mongod during upgrades and reconfiguration, and the probe must
+              # not race it. Restarts mongod only after five minutes without
+              # its port.
+              livenessProbe:
+                tcpSocket:
+                  port: 27017
+                initialDelaySeconds: 60
+                periodSeconds: 30
+                timeoutSeconds: 5
+                failureThreshold: 10
             - name: mongodb-agent
+              securityContext:
+                runAsGroup: 2000
               resources:
                 {{- toYaml $m.resources.agent | nindent 16 }}
 {{- end }}
