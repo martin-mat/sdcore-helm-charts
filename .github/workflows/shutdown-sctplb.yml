@@ -1,0 +1,44 @@
+name: shutdown-verify
+on: {push: {branches: [shutdown-verify-sctplb]}}
+jobs:
+  t:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [main-plus-sctplb]
+    name: ${{ matrix.variant }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: every run script on this branch
+        run: grep -h "sctplb\|^exec" 5g-control-plane/templates/bin/*.tpl omec-sub-provision/templates/bin/*.tpl | grep -c "^exec"
+      - run: |
+          cat > kind.yaml <<'K'
+          kind: Cluster
+          apiVersion: kind.x-k8s.io/v1alpha4
+          nodes: [{role: control-plane}, {role: worker}, {role: worker}, {role: worker}]
+          K
+          kind create cluster --config kind.yaml --wait 120s
+      - name: install
+        run: |
+          helm repo add bitnami https://charts.bitnami.com/bitnami
+          helm dependency build 5g-control-plane
+          helm dependency build sdcore-helm-charts
+          # The badge job's components and CPU sizing (.github/cnti/cnti-testsuite.yaml), plus sctplb.
+          sets=$(grep -E '^\s+--set ' .github/cnti/cnti-testsuite.yaml | tr -s ' ' | tr '\n' ' ')
+          helm install sd-core sdcore-helm-charts -n sdcore --create-namespace $sets --set 5g-control-plane.config.sctplb.deploy=true --set 5g-control-plane.resources.sctplb.requests.cpu=200m --wait --timeout 10m
+          sleep 60; kubectl get pods -n sdcore
+      - name: why the install did not finish
+        if: failure()
+        run: |
+          kubectl get pods -n sdcore -o wide
+          for p in $(kubectl get pods -n sdcore --no-headers | awk '$3!="Running" || $2 !~ /^([0-9]+)\/\1$/ {print $1}'); do
+            echo "===== $p"; kubectl describe pod -n sdcore $p | sed -n '/^Containers:/,/^Conditions:/p' | grep -E "Image:|State:|Reason:|Exit Code|Ready:|Restart Count" ; kubectl get events -n sdcore --field-selector involvedObject.name=$p --sort-by=.lastTimestamp | tail -5
+            kubectl logs -n sdcore $p --all-containers --tail=15 2>&1 | tail -15
+          done
+      - name: shutdown
+        run: mkdir -p /tmp/shutdown-logs; ci/shutdown.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: {name: "logs-${{ matrix.variant }}", path: /tmp/shutdown-logs}
