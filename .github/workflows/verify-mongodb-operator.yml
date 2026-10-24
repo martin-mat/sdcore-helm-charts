@@ -2,7 +2,7 @@
 name: Verify MongoDB operator opt-in
 on:
   push:
-    branches: [verify-mongodb-operator]
+    branches: [verify-rotate]
   workflow_dispatch:
 permissions:
   contents: read
@@ -128,6 +128,38 @@ jobs:
           echo "$(kubectl -n sdcore logs deploy/smf --all-containers --tail=-1 | grep -m1 'mongodb://')"
           [ $bad = 0 ]
           echo "FUNCTION OK" >> "$GITHUB_STEP_SUMMARY"
+      - name: Rotate the password
+        run: |
+          set -euo pipefail
+          ann() { kubectl -n sdcore get deploy "$1" -o json | jq -r '.spec.template.metadata.annotations["checksum/mongodb-credentials"] // "none"'; }
+          declare -A before
+          for d in amf nrf pcf smf udr upf-adapter webui; do before[$d]=$(ann $d); done
+          values=$(yq '.deployments.helm_dirs[0].helm_values' .github/cnti/cnti-operator.yaml | sed 's/Verify-Pa55/Rotated-Pa66/')
+          eval helm upgrade sd-core ./sdcore-helm-charts -n sdcore $values --wait --timeout 15m
+          for d in amf nrf pcf smf udr upf-adapter webui; do
+            kubectl -n sdcore rollout status deploy/$d --timeout=5m >/dev/null
+            after=$(ann $d)
+            echo "$d: checksum changed: $([ "${before[$d]}" != "$after" ] && echo yes || echo NO)"
+            [ "${before[$d]}" != "$after" ]
+          done
+          for i in $(seq 1 30); do
+            p=$(kubectl -n sdcore get mongodbcommunity mongodb -o jsonpath='{.status.phase}'); [ "$p" = Running ] && break; sleep 10
+          done
+          echo "MongoDBCommunity phase after rotation: $p"
+          q() { kubectl -n sdcore run "mongosh-$1" --rm -i --quiet --restart=Never --image=mongo:8.0.13 -- \
+            mongosh --quiet "mongodb://aether:$2@mongodb-svc:27017/?replicaSet=mongodb&authSource=admin" \
+            --eval 'print(db.getSiblingDB("authentication").getCollection("subscriptionData.authenticationData.authenticationSubscription").countDocuments())' 2>&1 | tail -1; }
+          for i in $(seq 1 20); do new=$(q new$i Rotated-Pa66 || true); echo "new password: $new"; [[ "$new" =~ ^[0-9]+$ ]] && break; sleep 10; done
+          old=$(q old Verify-Pa55 || true); echo "old password: $old"
+          [[ "$new" =~ ^[1-9][0-9]*$ ]]
+          ! [[ "$old" =~ ^[0-9]+$ ]]
+          sleep 30
+          notready=$(kubectl -n sdcore get pods -o json | jq '[.items[] | select(.status.phase!="Succeeded") | select(([.status.conditions[]? | select(.type=="Ready" and .status=="True")] | length) == 0)] | length')
+          echo "pods not Ready after rotation: $notready"; [ "$notready" = 0 ]
+          for d in nrf udr webui; do
+            echo "$d: $(kubectl -n sdcore logs deploy/$d --all-containers --tail=-1 | grep -cE 'MongoDB Connection Successful|Connected to common database|connected to MongoDB') connection lines, $(kubectl -n sdcore logs deploy/$d --all-containers --tail=-1 | grep -ciE 'authentication failed|auth error') auth errors since restart"
+          done
+          echo "ROTATION OK" >> "$GITHUB_STEP_SUMMARY"
       - name: Diagnostics
         if: failure()
         run: |

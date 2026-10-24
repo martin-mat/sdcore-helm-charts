@@ -518,3 +518,12 @@ otherwise.
 {{- define "5g-control-plane.nfConfigData" -}}
 {{- if .Values.mongodbCommunity.enabled }}stringData{{ else }}data{{ end -}}
 {{- end -}}
+
+{{/*
+A checksum of the MongoDB credentials, on the pods of the functions whose
+configuration carries them, so that a password change rolls them out with the
+new URL.
+*/}}
+{{- define "5g-control-plane.mongodbCredentialsChecksum" -}}
+{{- printf "%s:%s" .Values.mongodbCommunity.user .Values.mongodbCommunity.password | sha256sum -}}
+{{- end -}}
