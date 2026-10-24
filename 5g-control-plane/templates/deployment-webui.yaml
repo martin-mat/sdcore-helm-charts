@@ -82,8 +82,13 @@ spec:
       {{- end }}
       volumes:
       - name: nf-config
+        {{- if .Values.mongodbCommunity.enabled }}
+        secret:
+          secretName: webui
+        {{- else }}
         configMap:
           name: webui
+        {{- end }}
           defaultMode: 493
       - name: certs
         emptyDir: {}

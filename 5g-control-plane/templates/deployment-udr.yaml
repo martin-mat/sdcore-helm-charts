@@ -87,8 +87,13 @@ spec:
       {{- end }}
       volumes:
       - name: nf-config
+        {{- if .Values.mongodbCommunity.enabled }}
+        secret:
+          secretName: udr
+        {{- else }}
         configMap:
           name: udr
+        {{- end }}
           defaultMode: 493
       - name: certs
         emptyDir: {}

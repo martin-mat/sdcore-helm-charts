@@ -83,8 +83,13 @@ spec:
       {{- end }}
       volumes:
       - name: nrf-config
+        {{- if .Values.mongodbCommunity.enabled }}
+        secret:
+          secretName: nrf
+        {{- else }}
         configMap:
           name: nrf
+        {{- end }}
           defaultMode: 493
       - name: certs
         emptyDir: {}

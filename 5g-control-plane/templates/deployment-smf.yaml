@@ -91,8 +91,13 @@ spec:
       {{- end }}
       volumes:
       - name: nf-config
+        {{- if .Values.mongodbCommunity.enabled }}
+        secret:
+          secretName: smf
+        {{- else }}
         configMap:
           name: smf
+        {{- end }}
           defaultMode: 493
       - name: certs
         emptyDir: {}

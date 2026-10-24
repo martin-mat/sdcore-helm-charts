@@ -70,8 +70,13 @@ spec:
       {{- end }}
       volumes:
       - name: nf-config
+        {{- if .Values.mongodbCommunity.enabled }}
+        secret:
+          secretName: upf-adapter
+        {{- else }}
         configMap:
           name: upf-adapter
+        {{- end }}
           defaultMode: 493
     {{- if .Values.config.coreDump.enabled }}
       - name: host-rootfs
