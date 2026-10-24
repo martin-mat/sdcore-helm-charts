@@ -10,6 +10,7 @@ env:
   MCK_VERSION: 1.14.0
 jobs:
   cnti:
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
@@ -108,7 +109,13 @@ jobs:
           bad=0
           for d in amf nrf pcf smf udr upf-adapter webui; do
             n=$(kubectl -n sdcore logs deploy/$d --all-containers --tail=-1 2>/dev/null | grep -ciE 'authentication failed|unauthorized|auth error' || true)
-            echo "$d auth errors in log: $n"; [ "$n" = 0 ] || bad=1
+            echo "$d auth errors in log: $n"
+            if [ "$n" != 0 ]; then
+              kubectl -n sdcore logs deploy/$d --all-containers --tail=-1 --timestamps 2>/dev/null | grep -iE -B3 -A3 'authentication failed|unauthorized|auth error' | cut -c1-400
+              kubectl -n sdcore get pod -l app=$d -o jsonpath='{range .items[*]}{.metadata.name} start={.status.startTime} restarts={.status.containerStatuses[*].restartCount}{"\n"}{end}'
+              kubectl -n sdcore get mongodbcommunity mongodb -o jsonpath='{.metadata.creationTimestamp} {.status}'; echo
+              bad=1
+            fi
           done
           [ $bad = 0 ]
           echo "FUNCTION OK" >> "$GITHUB_STEP_SUMMARY"
