@@ -122,6 +122,7 @@ jobs:
             masked=$(echo "$log" | grep -c 'mongodb://aether:\*\*\*\*@' || true)
             leaked=$(echo "$log" | grep -c 'Verify-Pa55' || true)
             echo "$d: masked URL lines=$masked, password lines=$leaked"
+            [ "$leaked" = 0 ] || echo "$log" | grep -n -B2 -A1 'Verify-Pa55' | cut -c1-400
             [ "$masked" -gt 0 ] && [ "$leaked" = 0 ] || bad=1
           done
           echo "$(kubectl -n sdcore logs deploy/smf --all-containers --tail=-1 | grep -m1 'mongodb://')"
