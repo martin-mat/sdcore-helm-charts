@@ -1,0 +1,121 @@
+# Fork-only verification of the mongodbCommunity opt-in (not part of the PR).
+name: Verify MongoDB operator opt-in
+on:
+  push:
+    branches: [verify-mongodb-operator]
+  workflow_dispatch:
+permissions:
+  contents: read
+env:
+  MCK_VERSION: 1.14.0
+jobs:
+  cnti:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build chart dependencies
+        run: |
+          set -euo pipefail
+          helm repo add bitnami https://charts.bitnami.com/bitnami
+          helm dependency build 5g-control-plane
+          helm dependency build sdcore-helm-charts
+      - uses: helm/kind-action@v1
+        with:
+          cluster_name: cnti-testsuite
+          config: .github/cnti/kind.yaml
+      - name: Install the MongoDB operator
+        run: |
+          set -euo pipefail
+          kubectl create namespace sdcore
+          helm repo add mongodb https://mongodb.github.io/helm-charts
+          helm install mongodb-kubernetes mongodb/mongodb-kubernetes --version $MCK_VERSION \
+            --namespace mongodb-operator --create-namespace \
+            --set operator.watchNamespace=sdcore --wait --timeout 5m
+      - id: cnti
+        uses: lfn-cnti/testsuite-action@70536fda55fcb11f4f7463175fe9d57c86b85574 # v1.2.0
+        with:
+          version: v2.2.0
+          cnf_config: .github/cnti/cnti-operator.yaml
+          create_kind_cluster: "false"
+          install_timeout: 900
+          tests: cert
+          fail_on_failure: "false"
+      - name: Summary
+        if: always()
+        run: |
+          echo "operator opt-in: essential ${{ steps.cnti.outputs.essential_passed }}/${{ steps.cnti.outputs.essential_max_passed }}" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Diagnostics
+        if: failure()
+        run: |
+          set +e
+          kubectl get pods -A -o wide
+          kubectl get mongodbcommunity -n sdcore -o yaml | tail -40
+          kubectl logs -n mongodb-operator deploy/mongodb-kubernetes-operator --tail=80
+
+  function:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build chart dependencies
+        run: |
+          set -euo pipefail
+          helm repo add bitnami https://charts.bitnami.com/bitnami
+          helm dependency build 5g-control-plane
+          helm dependency build sdcore-helm-charts
+      - uses: helm/kind-action@v1
+        with:
+          cluster_name: sdcore
+          config: .github/cnti/kind.yaml
+      - name: Install the MongoDB operator
+        run: |
+          set -euo pipefail
+          kubectl create namespace sdcore
+          helm repo add mongodb https://mongodb.github.io/helm-charts
+          helm install mongodb-kubernetes mongodb/mongodb-kubernetes --version $MCK_VERSION \
+            --namespace mongodb-operator --create-namespace \
+            --set operator.watchNamespace=sdcore --wait --timeout 5m
+      - name: Install SD-Core with mongodbCommunity
+        run: |
+          set -euo pipefail
+          values=$(yq '.deployments.helm_dirs[0].helm_values' .github/cnti/cnti-operator.yaml)
+          eval helm install sd-core ./sdcore-helm-charts -n sdcore $values --wait --timeout 15m
+          kubectl -n sdcore get pods -o wide
+      - name: Checks
+        run: |
+          set -euo pipefail
+          phase=$(kubectl -n sdcore get mongodbcommunity mongodb -o jsonpath='{.status.phase}')
+          echo "MongoDBCommunity phase: $phase"; [ "$phase" = Running ]
+          for nf in amf nrf pcf smf udr upf-adapter webui; do
+            kubectl -n sdcore get secret $nf -o name
+            ! kubectl -n sdcore get configmap $nf -o name 2>/dev/null
+          done
+          echo "NF configs are Secrets" >> "$GITHUB_STEP_SUMMARY"
+          notready=$(kubectl -n sdcore get pods -o json | jq '[.items[] | select(.status.phase!="Succeeded") | select(([.status.conditions[]? | select(.type=="Ready" and .status=="True")] | length) == 0)] | length')
+          echo "pods not Ready: $notready"; [ "$notready" = 0 ]
+          # Subscribers simapp provisions through the WebUI end up in MongoDB.
+          url='mongodb://aether:Verify-Pa55@mongodb-svc:27017/?replicaSet=mongodb&authSource=admin'
+          for i in $(seq 1 30); do
+            out=$(kubectl -n sdcore run mongosh-$i --rm -i --quiet --restart=Never --image=mongo:8.0.13 -- \
+              mongosh --quiet "$url" --eval 'let r={}; for (const d of ["aether","authentication"]) { for (const c of db.getSiblingDB(d).getCollectionNames()) { r[d+"."+c]=db.getSiblingDB(d).getCollection(c).countDocuments() } }; print(JSON.stringify(r))' 2>/dev/null | tail -1) || true
+            echo "$out"
+            if echo "$out" | grep -q 'authenticationSubscription":[1-9]'; then break; fi
+            sleep 10
+          done
+          echo "$out" | grep -q 'authenticationSubscription":[1-9]'
+          echo "MongoDB collections: $out" >> "$GITHUB_STEP_SUMMARY"
+          bad=0
+          for d in amf nrf pcf smf udr upf-adapter webui; do
+            n=$(kubectl -n sdcore logs deploy/$d --all-containers --tail=-1 2>/dev/null | grep -ciE 'authentication failed|unauthorized|auth error' || true)
+            echo "$d auth errors in log: $n"; [ "$n" = 0 ] || bad=1
+          done
+          [ $bad = 0 ]
+          echo "FUNCTION OK" >> "$GITHUB_STEP_SUMMARY"
+      - name: Diagnostics
+        if: failure()
+        run: |
+          set +e
+          kubectl get pods -A -o wide
+          kubectl get mongodbcommunity -n sdcore -o yaml | tail -40
+          for d in webui udr nrf; do echo "== $d"; kubectl -n sdcore logs deploy/$d --all-containers --tail=60; done
