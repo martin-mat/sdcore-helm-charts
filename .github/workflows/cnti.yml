@@ -105,7 +105,7 @@ jobs:
   # other branches: the same steps with a read-only token. The action publishes
   # the badge only from the default branch, so nothing is published here.
   essential-pr:
-    if: github.repository == 'omec-project/sdcore-helm-charts' && (github.event_name == 'pull_request' || github.ref != 'refs/heads/main')
+    if: (github.repository == 'omec-project/sdcore-helm-charts' || github.repository == 'martin-mat/sdcore-helm-charts') && (github.event_name == 'pull_request' || github.ref != 'refs/heads/main')
     runs-on: ubuntu-latest
     timeout-minutes: 120
     permissions:
